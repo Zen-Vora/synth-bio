@@ -101,7 +101,7 @@ class Brain:
             delivered_signal = connection.advance()
             if delivered_signal is None:
                 continue
-            connection.target_neuron.receive(delivered_signal)
+            connection.target_neuron.receive(delivered_signal, connection)
 
         # Ask every neuron to update itself.
         firing_neurons = []
@@ -109,6 +109,15 @@ class Brain:
         for neuron in self.neurons:
             if neuron.update(self.current_tick):
                 firing_neurons.append(neuron)
+
+        # Record source firing times and let plastic synapses adapt.
+        for neuron in firing_neurons:
+            for connection in neuron.outgoing_connections:
+                connection.record_source_fire(self.current_tick)
+
+        for neuron in firing_neurons:
+            for connection in neuron.incoming_connections:
+                connection.apply_stdp(self.current_tick)
 
         # After neurons decide to fire, let the brain dispatch outgoing signals.
         for neuron in firing_neurons:

@@ -10,44 +10,45 @@ from brain import Brain
 def main():
     brain = Brain()
 
-    # Create an explicit input neuron that represents the environment.
+    # Create a branching network where multiple contributors can help one later neuron.
     input_neuron = brain.create_neuron(
         output_strength=1.0,
-        fire_threshold=1.0,
+        fire_threshold=0.5,
         neuron_type="INPUT",
     )
     neuron_a = brain.create_neuron(
         output_strength=0.8,
-        fire_threshold=1.0,
+        fire_threshold=0.5,
         neuron_type="NORMAL",
     )
     neuron_b = brain.create_neuron(
         output_strength=0.8,
-        fire_threshold=1.0,
+        fire_threshold=0.5,
         neuron_type="NORMAL",
     )
     neuron_c = brain.create_neuron(
         output_strength=0.8,
-        fire_threshold=1.0,
+        fire_threshold=0.5,
         neuron_type="NORMAL",
     )
     neuron_d = brain.create_neuron(
         output_strength=0.8,
-        fire_threshold=1.0,
+        fire_threshold=0.8,
         neuron_type="NORMAL",
     )
     neuron_e = brain.create_neuron(
         output_strength=0.8,
-        fire_threshold=1.0,
+        fire_threshold=0.5,
         neuron_type="OUTPUT",
     )
 
-    # Wire the input neuron into the network.
-    brain.create_connection(source_neuron=input_neuron, target_neuron=neuron_a, weight=1.0, signal_delay=1)
-    brain.create_connection(source_neuron=neuron_a, target_neuron=neuron_b, weight=1.0, signal_delay=1)
-    brain.create_connection(source_neuron=neuron_b, target_neuron=neuron_c, weight=1.0, signal_delay=1)
-    brain.create_connection(source_neuron=neuron_c, target_neuron=neuron_d, weight=1.0, signal_delay=1)
-    brain.create_connection(source_neuron=neuron_d, target_neuron=neuron_e, weight=1.0, signal_delay=1)
+    # Wire the branching network described in the design.
+    brain.create_connection(source_neuron=input_neuron, target_neuron=neuron_a, weight=0.50, signal_delay=1)
+    brain.create_connection(source_neuron=neuron_a, target_neuron=neuron_b, weight=0.50, signal_delay=1)
+    brain.create_connection(source_neuron=neuron_a, target_neuron=neuron_c, weight=0.50, signal_delay=1)
+    brain.create_connection(source_neuron=neuron_b, target_neuron=neuron_d, weight=0.50, signal_delay=1)
+    brain.create_connection(source_neuron=neuron_c, target_neuron=neuron_d, weight=0.50, signal_delay=1)
+    brain.create_connection(source_neuron=neuron_d, target_neuron=neuron_e, weight=0.50, signal_delay=1)
 
     # Send a test signal into the input neuron.
     input_neuron.receive(1.0)

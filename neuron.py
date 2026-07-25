@@ -54,6 +54,8 @@ class Neuron:
         self.fire_count = 0
         # Incoming signals are buffered here before being integrated.
         self.input_buffer = [] if input_buffer is None else input_buffer
+        # Tracks which incoming connections contributed to the most recent activation.
+        self.last_activation_contributors = {}
         # Strength used for outgoing signals when this neuron fires.
         self.output_strength = output_strength
         # Connections targeting this neuron.
@@ -67,9 +69,9 @@ class Neuron:
         # Functional role of the neuron: INPUT, NORMAL, or OUTPUT.
         self.neuron_type = neuron_type
 
-    def receive(self, signal_strength):
+    def receive(self, signal_strength, connection=None):
         # Accept a signal and store it in the neuron's input buffer.
-        self.input_buffer.append(signal_strength)
+        self.input_buffer.append((signal_strength, connection))
 
     def update(self, current_tick):
         # A neuron decides whether it fires based on its own state and activation.
@@ -81,9 +83,22 @@ class Neuron:
             return False
 
         # Integrate all buffered input signals into activation.
-        total_input = sum(self.input_buffer)
+        total_input = 0.0
+        contributors = {}
+        for entry in self.input_buffer:
+            if isinstance(entry, tuple):
+                signal_strength, connection = entry
+            else:
+                signal_strength = entry
+                connection = None
+
+            if connection is not None:
+                contributors[connection] = contributors.get(connection, 0.0) + signal_strength
+            total_input += signal_strength
+
         self.input_buffer.clear()
         self.current_activation += total_input
+        self.last_activation_contributors = contributors
 
         # Enforce the maximum activation cap.
         if self.current_activation > self.max_activation:
@@ -91,12 +106,18 @@ class Neuron:
 
         # Decide whether the neuron fires this tick.
         if self.current_activation >= self.fire_threshold:
+            for connection, contribution in contributors.items():
+                connection.reward_for_spike()
             self.current_activation = 0.0
             self.current_state = STATE_REFRACTORY
             self.refractory_timer = DEFAULT_REFRACTORY_TIMER
             self.last_fire_tick = current_tick
             self.fire_count += 1
             return True
+
+        if self.current_activation >= (0.8 * self.fire_threshold):
+            for connection, contribution in contributors.items():
+                connection.reward_for_subthreshold()
 
         # Apply activation decay toward baseline when the neuron does not fire.
         self.current_activation = max(0.0, self.current_activation - self.decay_rate)

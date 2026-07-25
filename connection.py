@@ -28,6 +28,34 @@ class Connection:
         self.signal_delay = signal_delay
         # Whether this connection currently carries signals.
         self.enabled = enabled
+        # Tick when the source neuron most recently fired.
+        self.last_source_fire_tick = None
+
+    def record_source_fire(self, current_tick):
+        # Remember when the source neuron fired so the connection can learn.
+        self.last_source_fire_tick = current_tick
+
+    def apply_stdp(self, current_tick):
+        # Adjust connection strength based on spike-timing-dependent plasticity.
+        if self.last_source_fire_tick is None:
+            return
+
+        time_difference = current_tick - self.last_source_fire_tick
+        if time_difference <= 0:
+            return
+
+        if time_difference <= 2:
+            self.weight = min(1.0, self.weight + 0.05)
+        else:
+            self.weight = max(0.0, self.weight - 0.01)
+
+    def reward_for_spike(self):
+        # Reward the connection strongly when it helped a neuron fire.
+        self.weight = min(1.0, self.weight + 0.12)
+
+    def reward_for_subthreshold(self):
+        # Reward the connection a little when it helped push a neuron close to firing.
+        self.weight = min(1.0, self.weight + 0.03)
 
     def transmit(self, signal_strength):
         # Begin transmitting a new signal along this connection.
