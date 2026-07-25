@@ -154,3 +154,51 @@ class Brain:
                     f"delay: {connection.signal_delay}, enabled: {connection.enabled})"
                 )
         print("=== End network structure ===")
+
+    def collect_stats(self):
+        # Collect a small summary of the current network state.
+        firing_neurons = [neuron for neuron in self.neurons if neuron.current_state == "REFRACTORY"]
+        average_weight = 0.0
+        if self.connections:
+            average_weight = sum(connection.weight for connection in self.connections) / len(self.connections)
+
+        if self.connections:
+            strongest_connection = max(self.connections, key=lambda connection: connection.weight)
+            weakest_connection = min(self.connections, key=lambda connection: connection.weight)
+        else:
+            strongest_connection = None
+            weakest_connection = None
+
+        average_activation = 0.0
+        if self.neurons:
+            average_activation = sum(neuron.current_activation for neuron in self.neurons) / len(self.neurons)
+
+        return {
+            "firing_neurons": len(firing_neurons),
+            "average_connection_weight": average_weight,
+            "strongest_connection": strongest_connection,
+            "weakest_connection": weakest_connection,
+            "average_activation": average_activation,
+        }
+
+    def print_stats(self):
+        # Print a compact summary of the current network state.
+        stats = self.collect_stats()
+        print(f"Tick {self.current_tick}")
+        print(f"Firing neurons: {stats['firing_neurons']}")
+        print(f"Average connection weight: {stats['average_connection_weight']:.2f}")
+        if stats["strongest_connection"] is not None:
+            print(
+                "Strongest connection: "
+                f"{stats['strongest_connection'].source_neuron.unique_id} → "
+                f"{stats['strongest_connection'].target_neuron.unique_id} "
+                f"({stats['strongest_connection'].weight:.2f})"
+            )
+        if stats["weakest_connection"] is not None:
+            print(
+                "Weakest connection: "
+                f"{stats['weakest_connection'].source_neuron.unique_id} → "
+                f"{stats['weakest_connection'].target_neuron.unique_id} "
+                f"({stats['weakest_connection'].weight:.2f})"
+            )
+        print(f"Average activation: {stats['average_activation']:.2f}")

@@ -36,7 +36,7 @@ class Connection:
         self.last_source_fire_tick = current_tick
 
     def apply_stdp(self, current_tick):
-        # Adjust connection strength based on spike-timing-dependent plasticity.
+        # Adjust connection strength based on causal spike timing.
         if self.last_source_fire_tick is None:
             return
 
@@ -44,10 +44,12 @@ class Connection:
         if time_difference <= 0:
             return
 
-        if time_difference <= 2:
-            self.weight = min(1.0, self.weight + 0.05)
+        if time_difference == 1:
+            self.weight = min(1.0, self.weight + 0.08)
+        elif time_difference == 2:
+            self.weight = min(1.0, self.weight + 0.04)
         else:
-            self.weight = max(0.0, self.weight - 0.01)
+            self.weight = max(0.0, self.weight - 0.02)
 
     def reward_for_spike(self):
         # Reward the connection strongly when it helped a neuron fire.
