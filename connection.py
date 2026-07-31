@@ -30,6 +30,8 @@ class Connection:
         self.enabled = enabled
         # Tick when the source neuron most recently fired.
         self.last_source_fire_tick = None
+        # Pending signals waiting to arrive at the target neuron.
+        self.pending_signals = []
 
     def record_source_fire(self, current_tick):
         # Remember when the source neuron fired so the connection can learn.
@@ -42,6 +44,7 @@ class Connection:
 
         time_difference = current_tick - self.last_source_fire_tick
         if time_difference <= 0:
+            self.weight = max(0.0, self.weight - 0.01)
             return
 
         if time_difference == 1:
@@ -59,26 +62,24 @@ class Connection:
         # Reward the connection a little when it helped push a neuron close to firing.
         self.weight = min(1.0, self.weight + 0.03)
 
-    def transmit(self, signal_strength):
+    def transmit(self, signal_strength, current_tick):
         # Begin transmitting a new signal along this connection.
         if not self.enabled:
             return
 
-        self._pending_signal = signal_strength * self.weight
-        self._remaining_travel_time = self.signal_delay
+        effective_signal = signal_strength * self.weight
+        if hasattr(self.source_neuron, "synaptic_fatigue"):
+            effective_signal *= self.source_neuron.synaptic_fatigue
+        self.pending_signals.append((current_tick + self.signal_delay, effective_signal))
 
-    def advance(self):
-        # Move a traveling signal one tick closer to its target.
-        pending_signal = getattr(self, "_pending_signal", None)
-        remaining_time = getattr(self, "_remaining_travel_time", None)
-        if pending_signal is None or remaining_time is None:
-            return None
-
-        self._remaining_travel_time -= 1
-        if self._remaining_travel_time <= 0:
-            delivered_signal = self._pending_signal
-            del self._pending_signal
-            del self._remaining_travel_time
-            return delivered_signal
-
-        return None
+    def advance(self, current_tick):
+        # Deliver any signals whose arrival tick has arrived.
+        delivered_signals = []
+        remaining_signals = []
+        for arrival_tick, signal_value in self.pending_signals:
+            if arrival_tick <= current_tick:
+                delivered_signals.append(signal_value)
+            else:
+                remaining_signals.append((arrival_tick, signal_value))
+        self.pending_signals = remaining_signals
+        return delivered_signals

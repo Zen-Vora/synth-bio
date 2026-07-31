@@ -6,6 +6,7 @@
 
 from neuron import Neuron, STATE_RESTING, DEFAULT_NEURON_TYPE
 from connection import Connection
+from world import World
 
 
 class Brain:
@@ -17,6 +18,7 @@ class Brain:
         connections=None,
         current_tick=0,
         next_available_id=0,
+        world=None,
     ):
         # List of all neurons in the brain.
         self.neurons = [] if neurons is None else neurons
@@ -28,6 +30,12 @@ class Brain:
         self.next_available_id = next_available_id
         # Record the firing paths produced in the last tick.
         self.last_firing_paths = []
+        # Actions produced by output neurons during the last tick.
+        self.last_actions = []
+        # Environment that can respond to output actions.
+        self.world = world if world is not None else World()
+        # Sensory neurons that receive signals from the world each tick.
+        self.sensory_neurons = []
 
     def create_neuron(
         self,
@@ -43,6 +51,9 @@ class Brain:
         last_fire_tick=None,
         age=0,
         neuron_type=DEFAULT_NEURON_TYPE,
+        excitatory=True,
+        synaptic_fatigue=1.0,
+        homeostasis_target=0.0,
     ):
         # Create a neuron and assign a unique ID automatically.
         neuron = Neuron(
@@ -59,6 +70,9 @@ class Brain:
             last_fire_tick=last_fire_tick,
             age=age,
             neuron_type=neuron_type,
+            excitatory=excitatory,
+            synaptic_fatigue=synaptic_fatigue,
+            homeostasis_target=homeostasis_target,
         )
         # Add the new neuron to the brain.
         self.neurons.append(neuron)
@@ -92,20 +106,31 @@ class Brain:
         self.next_available_id += 1
         return connection
 
+    def register_sensor(self, neuron, sensor_name):
+        # Register a neuron as a sensory neuron for one property in the world.
+        self.sensory_neurons.append((neuron, sensor_name))
+
     def tick(self):
         # Advance the global simulation tick counter.
         self.current_tick += 1
 
+        # Let the world change a little each tick.
+        self.world.tick()
+
+        # Feed the current world state into any registered sensory neurons.
+        for neuron, sensor_name in self.sensory_neurons:
+            neuron.receive(self.world.get_sensor_signal(sensor_name))
+
         # Deliver signals from connections to target neurons.
         for connection in self.connections:
-            delivered_signal = connection.advance()
-            if delivered_signal is None:
-                continue
-            connection.target_neuron.receive(delivered_signal, connection)
+            delivered_signals = connection.advance(self.current_tick)
+            for delivered_signal in delivered_signals:
+                connection.target_neuron.receive(delivered_signal, connection)
 
         # Ask every neuron to update itself.
         firing_neurons = []
         self.last_firing_paths = []
+        self.last_actions = []
         for neuron in self.neurons:
             if neuron.update(self.current_tick):
                 firing_neurons.append(neuron)
@@ -122,8 +147,29 @@ class Brain:
         # After neurons decide to fire, let the brain dispatch outgoing signals.
         for neuron in firing_neurons:
             for connection in neuron.outgoing_connections:
-                connection.transmit(neuron.output_strength)
+                connection.transmit(neuron.output_strength, self.current_tick)
                 self.last_firing_paths.append((neuron, connection.target_neuron))
+
+        # Output neurons can act on the environment.
+        for neuron in firing_neurons:
+            if neuron.neuron_type != "OUTPUT":
+                continue
+            action = self._action_for_neuron(neuron)
+            if action:
+                self.world.apply_action(action)
+                self.last_actions.append(action)
+
+    def _action_for_neuron(self, neuron):
+        # A tiny action mapping so output neurons change the world.
+        action_map = {
+            0: "move_left",
+            1: "move_right",
+            2: "eat",
+            3: "sleep",
+            4: "look",
+            5: "grab",
+        }
+        return action_map.get(neuron.unique_id % len(action_map), None)
 
     def visualize(self):
         # Print a simple text graph for the most recent firing paths.

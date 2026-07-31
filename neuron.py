@@ -18,6 +18,14 @@ DEFAULT_NEURON_TYPE = NEURON_TYPE_NORMAL
 
 
 class Neuron:
+    @property
+    def current_activation(self):
+        return self.membrane_potential
+
+    @current_activation.setter
+    def current_activation(self, value):
+        self.membrane_potential = value
+
     # A neuron stores the requested state fields and decides whether it fires.
     def __init__(
         self,
@@ -35,11 +43,14 @@ class Neuron:
         age=0,
         decay_rate=0.1,
         neuron_type=DEFAULT_NEURON_TYPE,
+        excitatory=True,
+        synaptic_fatigue=1.0,
+        homeostasis_target=0.0,
     ):
         # Unique identifier for this neuron.
         self.unique_id = unique_id
-        # Current total activation level of the neuron.
-        self.current_activation = current_activation
+        # Current membrane potential of the neuron.
+        self.membrane_potential = current_activation
         # Activation threshold required to fire.
         self.fire_threshold = fire_threshold
         # Maximum activation value the neuron can hold.
@@ -68,6 +79,20 @@ class Neuron:
         self.age = age
         # Functional role of the neuron: INPUT, NORMAL, or OUTPUT.
         self.neuron_type = neuron_type
+        # Whether this neuron is excitatory (+ signal) or inhibitory (- signal).
+        self.excitatory = excitatory
+        # Current synaptic fatigue factor, used to reduce outgoing strength over repeated firing.
+        self.synaptic_fatigue = synaptic_fatigue
+        # Desired firing rate target for homeostasis.
+        self.homeostasis_target = homeostasis_target
+        # Track how often this neuron has fired recently for homeostatic balancing.
+        self.recent_fire_count = 0
+        # Energy budget available to the neuron for firing.
+        self.energy = 100.0
+        # Energy level below which the neuron cannot fire.
+        self.energy_fire_threshold = 20.0
+        # Homeostatic target firing rate.
+        self.homeostasis_target = 0.2 if homeostasis_target == 0.0 else homeostasis_target
 
     def receive(self, signal_strength, connection=None):
         # Accept a signal and store it in the neuron's input buffer.
@@ -75,6 +100,9 @@ class Neuron:
 
     def update(self, current_tick):
         # A neuron decides whether it fires based on its own state and activation.
+        # Energy is spent on firing, and the neuron regains some energy each tick.
+        self.energy = min(100.0, self.energy + 0.5)
+
         if self.current_state == STATE_REFRACTORY:
             # Refractory neurons ignore input and count down.
             self.refractory_timer -= 1
@@ -97,29 +125,55 @@ class Neuron:
             total_input += signal_strength
 
         self.input_buffer.clear()
-        self.current_activation += total_input
+        adjusted_input = total_input * self.synaptic_fatigue
+        if not self.excitatory:
+            adjusted_input = -adjusted_input
+        self.membrane_potential += adjusted_input
         self.last_activation_contributors = contributors
 
         # Enforce the maximum activation cap.
-        if self.current_activation > self.max_activation:
-            self.current_activation = self.max_activation
+        if self.membrane_potential > self.max_activation:
+            self.membrane_potential = self.max_activation
+
+        # Remember the membrane state before noisy fluctuations so plasticity
+        # remains predictable even when the network is lightly perturbed.
+        pre_noise_membrane = self.membrane_potential
+
+        # Add a small amount of spontaneous noise to create ongoing brain activity.
+        import random
+
+        spontaneous_noise = random.uniform(-0.005, 0.005)
+        self.membrane_potential += spontaneous_noise
 
         # Decide whether the neuron fires this tick.
-        if self.current_activation >= self.fire_threshold:
+        if (
+            self.membrane_potential >= self.fire_threshold
+            and self.energy >= self.energy_fire_threshold
+            and random.random() >= 0.01
+        ):
             for connection, contribution in contributors.items():
                 connection.reward_for_spike()
-            self.current_activation = 0.0
+            self.membrane_potential = 0.0
             self.current_state = STATE_REFRACTORY
             self.refractory_timer = DEFAULT_REFRACTORY_TIMER
             self.last_fire_tick = current_tick
             self.fire_count += 1
+            self.recent_fire_count += 1
+            self.energy = max(0.0, self.energy - 10.0)
+            self.synaptic_fatigue = max(0.2, self.synaptic_fatigue - 0.05)
+            self.fire_threshold = max(0.5, self.fire_threshold + 0.02)
             return True
 
-        if self.current_activation >= (0.8 * self.fire_threshold):
+        if pre_noise_membrane >= (0.8 * self.fire_threshold):
             for connection, contribution in contributors.items():
                 connection.reward_for_subthreshold()
 
-        # Apply activation decay toward baseline when the neuron does not fire.
-        self.current_activation = max(0.0, self.current_activation - self.decay_rate)
+        # Apply leak and homeostasis.
+        self.membrane_potential = max(0.0, self.membrane_potential - self.decay_rate)
+        self.recent_fire_count = max(0, self.recent_fire_count - 1)
+        if self.recent_fire_count == 0:
+            self.fire_threshold = max(0.5, self.fire_threshold - 0.01)
+        if self.fire_count > 0 and self.recent_fire_count > 0:
+            self.fire_threshold = max(0.5, self.fire_threshold + 0.001)
         return False
 
