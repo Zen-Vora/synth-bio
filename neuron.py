@@ -14,6 +14,13 @@ DEFAULT_REFRACTORY_TIMER = 1
 NEURON_TYPE_INPUT = "INPUT"
 NEURON_TYPE_NORMAL = "NORMAL"
 NEURON_TYPE_OUTPUT = "OUTPUT"
+NEURON_TYPE_EXCITATORY = "EXCITATORY"
+NEURON_TYPE_INHIBITORY = "INHIBITORY"
+NEURON_TYPE_MEMORY = "MEMORY"
+NEURON_TYPE_PACEMAKER = "PACEMAKER"
+NEURON_TYPE_REWARD = "REWARD"
+NEURON_TYPE_MOTOR = "MOTOR"
+NEURON_TYPE_SENSORY = "SENSORY"
 DEFAULT_NEURON_TYPE = NEURON_TYPE_NORMAL
 
 
@@ -53,6 +60,8 @@ class Neuron:
         self.membrane_potential = current_activation
         # Activation threshold required to fire.
         self.fire_threshold = fire_threshold
+        self.refractory_period = 1
+        self.decay_rate = 0.1
         # Maximum activation value the neuron can hold.
         self.max_activation = max_activation
         # Current state: RESTING, REFRACTORY, or another custom label.
@@ -93,6 +102,41 @@ class Neuron:
         self.energy_fire_threshold = 20.0
         # Homeostatic target firing rate.
         self.homeostasis_target = 0.2 if homeostasis_target == 0.0 else homeostasis_target
+        # Specialized neuron parameters.
+        self.apply_type_parameters(neuron_type)
+
+    def apply_type_parameters(self, neuron_type):
+        # Give each neuron class a different behavioral profile.
+        type_key = (neuron_type or DEFAULT_NEURON_TYPE).upper()
+        profiles = {
+            NEURON_TYPE_INPUT: {"fire_threshold": 0.7, "decay_rate": 0.08, "refractory_period": 1, "plasticity_rate": 0.04},
+            NEURON_TYPE_OUTPUT: {"fire_threshold": 0.8, "decay_rate": 0.09, "refractory_period": 1, "plasticity_rate": 0.05},
+            NEURON_TYPE_EXCITATORY: {"fire_threshold": 1.0, "decay_rate": 0.10, "refractory_period": 1, "plasticity_rate": 0.06},
+            NEURON_TYPE_INHIBITORY: {"fire_threshold": 1.3, "decay_rate": 0.06, "refractory_period": 2, "plasticity_rate": 0.03},
+            NEURON_TYPE_MEMORY: {"fire_threshold": 1.1, "decay_rate": 0.05, "refractory_period": 2, "plasticity_rate": 0.08},
+            NEURON_TYPE_PACEMAKER: {"fire_threshold": 0.9, "decay_rate": 0.12, "refractory_period": 1, "plasticity_rate": 0.04},
+            NEURON_TYPE_REWARD: {"fire_threshold": 0.8, "decay_rate": 0.07, "refractory_period": 1, "plasticity_rate": 0.07},
+            NEURON_TYPE_MOTOR: {"fire_threshold": 0.9, "decay_rate": 0.08, "refractory_period": 1, "plasticity_rate": 0.05},
+            NEURON_TYPE_SENSORY: {"fire_threshold": 0.75, "decay_rate": 0.08, "refractory_period": 1, "plasticity_rate": 0.05},
+            NEURON_TYPE_NORMAL: {"fire_threshold": 1.0, "decay_rate": 0.10, "refractory_period": 1, "plasticity_rate": 0.05},
+        }
+        profile = profiles.get(type_key, profiles[NEURON_TYPE_NORMAL])
+
+        self.fire_threshold = max(0.5, profile["fire_threshold"])
+        self.decay_rate = profile["decay_rate"]
+        self.refractory_period = profile["refractory_period"]
+        self.plasticity_rate = profile["plasticity_rate"]
+
+    def adapt_to_context(self, chemistry, motivation):
+        # Neurons adjust their excitability in a more biologically plausible way.
+        dopamine = chemistry.get("dopamine", 0.5)
+        serotonin = chemistry.get("serotonin", 0.5)
+        acetylcholine = chemistry.get("acetylcholine", 0.5)
+        noradrenaline = chemistry.get("noradrenaline", 0.5)
+
+        self.fire_threshold = max(0.4, self.fire_threshold + 0.002 * (noradrenaline - 0.5) - 0.001 * (serotonin - 0.5))
+        self.synaptic_fatigue = max(0.2, min(1.0, self.synaptic_fatigue + 0.002 * (dopamine - 0.5)))
+        self.plasticity_rate = max(0.01, min(0.2, self.plasticity_rate + 0.001 * (acetylcholine - 0.5) + 0.001 * (motivation.get("curiosity", 0.5) - 0.5)))
 
     def receive(self, signal_strength, connection=None):
         # Accept a signal and store it in the neuron's input buffer.
@@ -155,7 +199,7 @@ class Neuron:
                 connection.reward_for_spike()
             self.membrane_potential = 0.0
             self.current_state = STATE_REFRACTORY
-            self.refractory_timer = DEFAULT_REFRACTORY_TIMER
+            self.refractory_timer = self.refractory_period
             self.last_fire_tick = current_tick
             self.fire_count += 1
             self.recent_fire_count += 1
