@@ -177,6 +177,11 @@ class Brain:
             if selected_action:
                 self.world.apply_action(selected_action)
                 self.last_actions.append(selected_action)
+        elif self.current_tick % 4 == 0:
+            fallback_action = self.choose_action_from_output_neurons(self.neurons[:6])
+            if fallback_action:
+                self.world.apply_action(fallback_action)
+                self.last_actions.append(fallback_action)
 
         # Update motivations from recent activity and environment.
         self.update_motivations(firing_neurons)
@@ -347,12 +352,12 @@ class Brain:
         # Bias the consensus toward actions that are currently useful to the brain.
         energy_need = max(0.0, 0.5 - self.motivation["energy"])
         if energy_need > 0.1:
-            action_scores["eat"] = action_scores.get("eat", 0.0) + energy_need * 0.4
-        if self.world.danger > 0.6:
-            action_scores["move_left"] = action_scores.get("move_left", 0.0) + 0.2
-            action_scores["move_right"] = action_scores.get("move_right", 0.0) + 0.2
-        if self.world.reward > 0.6:
-            action_scores["grab"] = action_scores.get("grab", 0.0) + 0.2
+            action_scores["eat"] = action_scores.get("eat", 0.0) + energy_need * 0.8
+        if self.world.danger > 0.4:
+            action_scores["move_left"] = action_scores.get("move_left", 0.0) + 0.3
+            action_scores["move_right"] = action_scores.get("move_right", 0.0) + 0.3
+        if self.world.reward > 0.4:
+            action_scores["grab"] = action_scores.get("grab", 0.0) + 0.25
 
         best_action = None
         best_score = None

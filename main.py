@@ -18,18 +18,103 @@ SAVE_PATH = os.path.join(SAVE_DIR, "brain_state.pkl")
 KEY_TICKS = {1, 5, 10, 25, 50, 100}
 
 
+def describe_world_changes(brain):
+    previous = brain.world.previous_values
+    current = {
+        "light": brain.world.light_level,
+        "temperature": brain.world.temperature,
+        "food": brain.world.food,
+        "danger": brain.world.danger,
+        "noise": brain.world.noise,
+        "reward": brain.world.reward,
+        "energy": brain.world.body_energy,
+    }
+
+    descriptions = []
+    for key, current_value in current.items():
+        previous_value = previous.get(key, current_value)
+        delta = current_value - previous_value
+        if abs(delta) < 0.01:
+            continue
+
+        if key == "light":
+            if delta > 0:
+                descriptions.append(f"light brightened ({previous_value:.2f} → {current_value:.2f})")
+            else:
+                descriptions.append(f"light dimmed ({previous_value:.2f} → {current_value:.2f})")
+        elif key == "temperature":
+            if delta > 0:
+                descriptions.append(f"temperature warmed ({previous_value:.2f} → {current_value:.2f})")
+            else:
+                descriptions.append(f"temperature cooled ({previous_value:.2f} → {current_value:.2f})")
+        elif key == "food":
+            if delta > 0:
+                descriptions.append(f"food increased ({previous_value:.2f} → {current_value:.2f})")
+            else:
+                descriptions.append(f"food dropped ({previous_value:.2f} → {current_value:.2f})")
+        elif key == "danger":
+            if delta > 0:
+                descriptions.append(f"danger rose ({previous_value:.2f} → {current_value:.2f})")
+            else:
+                descriptions.append(f"danger eased ({previous_value:.2f} → {current_value:.2f})")
+        elif key == "noise":
+            if delta > 0:
+                descriptions.append(f"noise increased ({previous_value:.2f} → {current_value:.2f})")
+            else:
+                descriptions.append(f"noise softened ({previous_value:.2f} → {current_value:.2f})")
+        elif key == "reward":
+            if delta > 0:
+                descriptions.append(f"reward climbed ({previous_value:.2f} → {current_value:.2f})")
+            else:
+                descriptions.append(f"reward faded ({previous_value:.2f} → {current_value:.2f})")
+        elif key == "energy":
+            if delta > 0:
+                descriptions.append(f"energy rose ({previous_value:.2f} → {current_value:.2f})")
+            else:
+                descriptions.append(f"energy fell ({previous_value:.2f} → {current_value:.2f})")
+
+    if not descriptions:
+        return "nothing much changed"
+    return "; ".join(descriptions)
+
+
+def describe_actions(actions):
+    if not actions:
+        return "none"
+
+    phrases = []
+    for action in actions:
+        action_name = (action or "").lower()
+        if action_name == "eat":
+            phrases.append("ate food")
+        elif action_name == "sleep":
+            phrases.append("slept")
+        elif action_name == "look":
+            phrases.append("looked around")
+        elif action_name == "grab":
+            phrases.append("grabbed something")
+        elif action_name == "move_left":
+            phrases.append("turned left")
+        elif action_name == "move_right":
+            phrases.append("turned right")
+        else:
+            phrases.append(action_name)
+    return ", ".join(phrases)
+
+
+def print_compact_tick_summary(brain, tick):
+    print(f"Tick {tick:03d} | World: {describe_world_changes(brain)} | Actions: {describe_actions(brain.last_actions)}")
+
+
 def print_tick_snapshot(brain, tick):
     stats = brain.collect_stats()
     active_neurons = [neuron for neuron in brain.neurons if neuron.current_state == "REFRACTORY"]
     top_neurons = sorted(brain.neurons, key=lambda neuron: (neuron.fire_count, neuron.membrane_potential), reverse=True)[:6]
 
     print(f"Tick {tick:03d}")
+    print(f"  World: {describe_world_changes(brain)}")
     print(
-        f"  World: light={brain.world.light_level:.2f}, temp={brain.world.temperature:.2f}, "
-        f"food={brain.world.food:.2f}, reward={brain.world.reward:.2f}, energy={brain.world.body_energy:.2f}"
-    )
-    print(
-        f"  Actions: {', '.join(brain.last_actions) if brain.last_actions else 'none'} | "
+        f"  Actions: {describe_actions(brain.last_actions)} | "
         f"refractory={len(active_neurons)} | avg_activation={stats['average_activation']:.2f}"
     )
     strongest = stats['strongest_connection']
@@ -193,6 +278,7 @@ def run_living_brain_demo(save_path=SAVE_PATH, max_ticks=None, resume=False):
         while True:
             brain.tick()
             tick = brain.current_tick
+            print_compact_tick_summary(brain, tick)
             if tick in KEY_TICKS:
                 print_tick_snapshot(brain, tick)
                 brain.print_brain_report()
