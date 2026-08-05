@@ -102,8 +102,25 @@ def describe_actions(actions):
     return ", ".join(phrases)
 
 
+def describe_memory_state(brain):
+    # A pair counts as a wired assembly once it has co-fired enough times to
+    # clear adapt_structure's growth threshold. memory_links is how many
+    # synapses currently feed into MEMORY-type (slow-decay) neurons -- the
+    # closest thing this brain has to "how much is in long-term storage."
+    strong_pairs = sum(1 for count in brain.co_fire_counts.values() if count >= 4)
+    memory_neurons = [neuron for neuron in brain.neurons if neuron.neuron_type == "MEMORY"]
+    memory_links = sum(len(neuron.incoming_connections) for neuron in memory_neurons)
+    return strong_pairs, memory_links
+
+
 def print_compact_tick_summary(brain, tick):
-    print(f"Tick {tick:03d} | World: {describe_world_changes(brain)} | Actions: {describe_actions(brain.last_actions)}")
+    strong_pairs, memory_links = describe_memory_state(brain)
+    rpe = getattr(brain, "last_reward_prediction_error", 0.0)
+    print(
+        f"Tick {tick:03d} | World: {describe_world_changes(brain)} | "
+        f"Actions: {describe_actions(brain.last_actions)} | "
+        f"assemblies={strong_pairs} memory_links={memory_links} rpe={rpe:+.2f}"
+    )
 
 
 def print_tick_snapshot(brain, tick):
@@ -122,6 +139,12 @@ def print_tick_snapshot(brain, tick):
     print(
         f"  Connections: {len(brain.connections)} | avg_weight={stats['average_connection_weight']:.2f} | "
         f"strongest={strongest_label}"
+    )
+    strong_pairs, memory_links = describe_memory_state(brain)
+    rpe = getattr(brain, "last_reward_prediction_error", 0.0)
+    print(
+        f"  Memory: {strong_pairs} co-fire pairs wired as assemblies | "
+        f"{memory_links} connections into MEMORY neurons | reward_prediction_error={rpe:+.3f}"
     )
     print("  Top neurons:")
     for neuron in top_neurons:

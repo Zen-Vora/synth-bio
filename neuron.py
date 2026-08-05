@@ -38,7 +38,7 @@ class Neuron:
         self,
         unique_id,
         current_activation=0.0,
-        fire_threshold=1.0,
+        fire_threshold=None,
         max_activation=1.0,
         current_state=STATE_RESTING,
         refractory_timer=0,
@@ -48,7 +48,7 @@ class Neuron:
         outgoing_connections=None,
         last_fire_tick=None,
         age=0,
-        decay_rate=0.1,
+        decay_rate=None,
         neuron_type=DEFAULT_NEURON_TYPE,
         excitatory=True,
         synaptic_fatigue=1.0,
@@ -58,18 +58,12 @@ class Neuron:
         self.unique_id = unique_id
         # Current membrane potential of the neuron.
         self.membrane_potential = current_activation
-        # Activation threshold required to fire.
-        self.fire_threshold = fire_threshold
-        self.refractory_period = 1
-        self.decay_rate = 0.1
         # Maximum activation value the neuron can hold.
         self.max_activation = max_activation
         # Current state: RESTING, REFRACTORY, or another custom label.
         self.current_state = current_state
         # Remaining refractory time before the neuron can fire again.
         self.refractory_timer = refractory_timer
-        # Activation decay rate per tick.
-        self.decay_rate = decay_rate
         # Cumulative count of how many times this neuron has fired.
         self.fire_count = 0
         # Incoming signals are buffered here before being integrated.
@@ -88,7 +82,10 @@ class Neuron:
         self.age = age
         # Functional role of the neuron: INPUT, NORMAL, or OUTPUT.
         self.neuron_type = neuron_type
-        # Whether this neuron is excitatory (+ signal) or inhibitory (- signal).
+        # Whether this neuron is excitatory (+ signal) or inhibitory (- signal)
+        # TO ITS TARGETS. Dale's Law: this is a fixed property of the neuron
+        # that determines its effect on whatever it synapses onto -- see
+        # Connection.transmit, which is where this now actually gets applied.
         self.excitatory = excitatory
         # Current synaptic fatigue factor, used to reduce outgoing strength over repeated firing.
         self.synaptic_fatigue = synaptic_fatigue
@@ -102,8 +99,22 @@ class Neuron:
         self.energy_fire_threshold = 20.0
         # Homeostatic target firing rate.
         self.homeostasis_target = 0.2 if homeostasis_target == 0.0 else homeostasis_target
-        # Specialized neuron parameters.
+        # Specialized neuron parameters. apply_type_parameters sets sensible
+        # defaults for fire_threshold/decay_rate/refractory_period/plasticity_rate
+        # based on neuron_type. Any fire_threshold/decay_rate explicitly passed
+        # to this constructor then overrides that default for this one neuron.
+        # (Previously apply_type_parameters ran last and unconditionally
+        # overwrote fire_threshold/decay_rate, so per-neuron customization
+        # passed in by callers like main.py was silently discarded.)
         self.apply_type_parameters(neuron_type)
+        if fire_threshold is not None:
+            self.fire_threshold = max(0.5, fire_threshold)
+        if decay_rate is not None:
+            self.decay_rate = decay_rate
+        # Rolling window of ticks this neuron fired on, used by Brain to
+        # detect which other neurons it tends to fire together with -- the
+        # raw material for Hebbian ("fire together, wire together") memory.
+        self.recent_fire_ticks = []
 
     def apply_type_parameters(self, neuron_type):
         # Give each neuron class a different behavioral profile.
@@ -169,9 +180,12 @@ class Neuron:
             total_input += signal_strength
 
         self.input_buffer.clear()
-        adjusted_input = total_input * self.synaptic_fatigue
-        if not self.excitatory:
-            adjusted_input = -adjusted_input
+        # Fatigue is applied once, at the synapse, when the signal is sent
+        # (see Connection.transmit). Whether a given signal excites or
+        # inhibits this neuron was also already decided at the synapse, by
+        # the SOURCE neuron's excitatory/inhibitory identity (Dale's Law),
+        # so nothing further needs to happen to the sign of total_input here.
+        adjusted_input = total_input
         self.membrane_potential += adjusted_input
         self.last_activation_contributors = contributors
 
@@ -206,6 +220,9 @@ class Neuron:
             self.energy = max(0.0, self.energy - 10.0)
             self.synaptic_fatigue = max(0.2, self.synaptic_fatigue - 0.05)
             self.fire_threshold = max(0.5, self.fire_threshold + 0.02)
+            self.recent_fire_ticks.append(current_tick)
+            if len(self.recent_fire_ticks) > 30:
+                self.recent_fire_ticks = self.recent_fire_ticks[-30:]
             return True
 
         if pre_noise_membrane >= (0.8 * self.fire_threshold):
@@ -220,4 +237,3 @@ class Neuron:
         if self.fire_count > 0 and self.recent_fire_count > 0:
             self.fire_threshold = max(0.5, self.fire_threshold + 0.001)
         return False
-

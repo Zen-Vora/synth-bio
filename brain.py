@@ -56,11 +56,21 @@ class Brain:
         self.structural_changes = {"added": 0, "removed": 0, "strengthened": 0, "weakened": 0}
         self.last_report_tick = 0
         self.last_report_structural_changes = dict(self.structural_changes)
+        # Counts how many times each pair of neurons has fired in the same
+        # tick together. This is the raw Hebbian signal ("fire together,
+        # wire together") that adapt_structure uses to grow real associative
+        # memory -- there is no separate symbolic memory log anywhere in the
+        # brain; a memory *is* a strengthened set of synapses.
+        self.co_fire_counts = {}
+        # Most recent reward-prediction error, produced by REWARD-type
+        # neurons in tick() and consumed by apply_neuromodulation(). Kept as
+        # an attribute (rather than a local variable) so main.py can log it.
+        self.last_reward_prediction_error = 0.0
 
     def create_neuron(
         self,
         current_activation=0.0,
-        fire_threshold=1.0,
+        fire_threshold=None,
         max_activation=1.0,
         current_state=STATE_RESTING,
         refractory_timer=0,
@@ -141,6 +151,27 @@ class Brain:
         for neuron, sensor_name in self.sensory_neurons:
             neuron.receive(self.world.get_sensor_signal(sensor_name))
 
+        # REWARD-type neurons get the actual environmental reward as direct
+        # drive, the same way sensory neurons get world state. Crucially, we
+        # read each REWARD neuron's membrane potential BEFORE handing it this
+        # tick's reward -- that pre-existing potential was built up entirely
+        # by ordinary learned synaptic weights from earlier ticks, so it *is*
+        # this neuron's prediction. The gap between prediction and what
+        # actually arrives is the reward-prediction error: no formula for
+        # "expected reward" is hard-coded anywhere, it emerges from STDP.
+        reward_neurons = [neuron for neuron in self.neurons if neuron.neuron_type == "REWARD"]
+        actual_reward_signal = self.world.reward / 10.0
+        reward_prediction_errors = []
+        for neuron in reward_neurons:
+            predicted_reward = neuron.membrane_potential
+            neuron.receive(actual_reward_signal)
+            reward_prediction_errors.append(actual_reward_signal - predicted_reward)
+        self.last_reward_prediction_error = (
+            sum(reward_prediction_errors) / len(reward_prediction_errors)
+            if reward_prediction_errors
+            else 0.0
+        )
+
         # Deliver signals from connections to target neurons.
         for connection in self.connections:
             delivered_signals = connection.advance(self.current_tick)
@@ -154,6 +185,15 @@ class Brain:
         for neuron in self.neurons:
             if neuron.update(self.current_tick):
                 firing_neurons.append(neuron)
+
+        # Track which neurons fired together this tick. Two neurons that
+        # keep showing up in this set together are candidates for growing a
+        # direct connection in adapt_structure -- that shared synapse is
+        # what lets a later partial cue reactivate the whole group again.
+        for i in range(len(firing_neurons)):
+            for j in range(i + 1, len(firing_neurons)):
+                pair_key = tuple(sorted((firing_neurons[i].unique_id, firing_neurons[j].unique_id)))
+                self.co_fire_counts[pair_key] = self.co_fire_counts.get(pair_key, 0) + 1
 
         # Record source firing times and let plastic synapses adapt.
         for neuron in firing_neurons:
@@ -212,8 +252,8 @@ class Brain:
             self.structural_changes["removed"] += 1
             return True
         if (
-            connection.last_source_fire_tick is not None
-            and (current_tick - connection.last_source_fire_tick) > 50
+            connection.last_activity_tick is not None
+            and (current_tick - connection.last_activity_tick) > 50
             and connection.weight <= 0.20
         ):
             self.remove_connection(connection)
@@ -230,19 +270,21 @@ class Brain:
         return True
 
     def apply_neuromodulation(self):
-        # Modulate plasticity and firing tendencies globally.
-        dopamine = self.chemistry["dopamine"]
-        serotonin = self.chemistry["serotonin"]
-        acetylcholine = self.chemistry["acetylcholine"]
-        noradrenaline = self.chemistry["noradrenaline"]
-
+        # Modulate plasticity and firing tendencies globally. adapt_to_context
+        # applies all of the chemistry-driven threshold/fatigue/plasticity
+        # changes for each neuron. (This used to also apply a second, separate
+        # update here -- for synaptic_fatigue the two updates used opposite
+        # signs and fought each other every tick, so that duplicate has been
+        # removed rather than fixed in place.)
         for neuron in self.neurons:
             neuron.adapt_to_context(self.chemistry, self.motivation)
-            neuron.fire_threshold = max(0.4, neuron.fire_threshold + 0.001 * (noradrenaline - 0.5))
-            neuron.synaptic_fatigue = max(0.2, neuron.synaptic_fatigue - 0.001 * (dopamine - 0.5))
-            neuron.plasticity_rate = max(0.01, neuron.plasticity_rate + 0.001 * (acetylcholine - 0.5))
 
-        self.chemistry["dopamine"] = min(1.0, max(0.0, self.chemistry["dopamine"] + 0.01 * (self.motivation["reward_expectation"] - 0.5) + 0.004 * (self.world.reward - 0.5)))
+        # Dopamine tracks the reward-prediction error computed in tick() from
+        # REWARD-neuron activity, not the raw environment reward value. A
+        # surprising reward moves dopamine more than an expected one, and an
+        # expected reward that fails to arrive can pull dopamine down -- the
+        # same bidirectional phasic response real dopamine neurons show.
+        self.chemistry["dopamine"] = min(1.0, max(0.0, self.chemistry["dopamine"] + 0.01 * (self.motivation["reward_expectation"] - 0.5) + 0.03 * self.last_reward_prediction_error))
         self.chemistry["serotonin"] = min(1.0, max(0.0, self.chemistry["serotonin"] + 0.01 * (self.motivation["energy"] - 0.5) + 0.003 * (1.0 - self.world.danger)))
         self.chemistry["acetylcholine"] = min(1.0, max(0.0, self.chemistry["acetylcholine"] + 0.01 * (self.motivation["curiosity"] - 0.5) + 0.002 * self.world.noise))
         self.chemistry["noradrenaline"] = min(1.0, max(0.0, self.chemistry["noradrenaline"] + 0.01 * (self.motivation["stress"] - 0.2) + 0.003 * self.world.danger))
@@ -281,23 +323,66 @@ class Brain:
                     self.grow_connection(source, candidate, weight=0.12)
                     self.grow_connection(candidate, source, weight=0.10)
 
-        # Grow or prune connections based on recent activity and weight.
-        active_neurons = [neuron for neuron in self.neurons if neuron.fire_count > 0]
-        if active_neurons and self.current_tick % 5 == 0:
-            for source_neuron in active_neurons[:4]:
-                for target_neuron in active_neurons[1:5]:
-                    if source_neuron is target_neuron:
-                        continue
-                    if any(connection.source_neuron is source_neuron and connection.target_neuron is target_neuron for connection in self.connections):
-                        continue
-                    if self.motivation["curiosity"] > 0.35 and self.chemistry["acetylcholine"] > 0.4:
-                        self.grow_connection(source_neuron, target_neuron, weight=0.06)
+        # Grow connections between neurons that have genuinely fired together
+        # often -- Hebbian assembly formation. This replaces an earlier
+        # version that connected arbitrary "recently active" neurons on a
+        # timer regardless of whether they ever fired together; that grew
+        # structure but not memory. A connection born here is, functionally,
+        # the beginning of a memory: reactivating one member of the pair
+        # later will help reactivate the other through this synapse.
+        if (
+            self.current_tick % 5 == 0
+            and self.co_fire_counts
+            and self.motivation["curiosity"] > 0.35
+            and self.chemistry["acetylcholine"] > 0.4
+        ):
+            # A high-reward or high-dopamine moment marks "this mattered" --
+            # the same signal that, in a real brain, helps tag a co-active
+            # pattern for longer-term consolidation instead of letting it
+            # fade with ordinary synaptic turnover.
+            reward_is_high = self.world.reward > 1.0 or self.chemistry["dopamine"] > 0.65
+            memory_neurons = [n for n in self.neurons if n.neuron_type == "MEMORY"]
+            id_to_neuron = {n.unique_id: n for n in self.neurons}
+
+            for (id_a, id_b), count in list(self.co_fire_counts.items()):
+                if count < 4:
+                    continue
+                neuron_a = id_to_neuron.get(id_a)
+                neuron_b = id_to_neuron.get(id_b)
+                if neuron_a is None or neuron_b is None:
+                    continue
+
+                base_weight = min(0.3, 0.05 + 0.01 * count)
+                if reward_is_high:
+                    base_weight = min(0.5, base_weight * 1.8)
+                self.grow_connection(neuron_a, neuron_b, weight=base_weight)
+                self.grow_connection(neuron_b, neuron_a, weight=base_weight)
+
+                # Consolidate into the least-used MEMORY neuron: MEMORY-type
+                # neurons already decay slower and persist longer than
+                # normal ones, so recruiting one into a rewarded assembly is
+                # this brain's closest analogue to long-term consolidation.
+                if reward_is_high and memory_neurons:
+                    target_memory = min(memory_neurons, key=lambda m: len(m.incoming_connections))
+                    self.grow_connection(neuron_a, target_memory, weight=0.2)
+                    self.grow_connection(neuron_b, target_memory, weight=0.2)
+
+        # Co-firing evidence fades over time if it isn't reinforced, the same
+        # way an unrehearsed memory trace weakens -- otherwise every pair
+        # that ever fired together stays a growth candidate forever.
+        if self.current_tick % 200 == 0 and self.co_fire_counts:
+            faded_counts = {}
+            for pair_key, count in self.co_fire_counts.items():
+                decayed = count - 1
+                if decayed > 0:
+                    faded_counts[pair_key] = decayed
+            self.co_fire_counts = faded_counts
 
         for connection in list(self.connections):
-            last_fire_tick = getattr(connection, "last_source_fire_tick", None)
-            if last_fire_tick is None:
+            last_activity = getattr(connection, "last_activity_tick", None)
+            if last_activity is None:
                 continue
-            if self.current_tick - last_fire_tick > 20 and connection.weight <= 0.15:
+            if self.current_tick - last_activity > 20 and connection.weight <= 0.15:
                 self.prune_connection(connection, self.current_tick)
 
     def save(self, path):

@@ -28,8 +28,14 @@ class Connection:
         self.signal_delay = signal_delay
         # Whether this connection currently carries signals.
         self.enabled = enabled
-        # Tick when the source neuron most recently fired.
+        # Tick when the source neuron most recently fired. Used for STDP,
+        # which cares about causal timing between source and target spikes.
         self.last_source_fire_tick = None
+        # Tick when this connection last actually carried a delivered
+        # signal. Used for staleness-based pruning -- distinct from
+        # last_source_fire_tick because a disabled connection's source can
+        # still fire without the connection itself doing anything useful.
+        self.last_activity_tick = None
         # Pending signals waiting to arrive at the target neuron.
         self.pending_signals = []
 
@@ -70,7 +76,14 @@ class Connection:
         effective_signal = signal_strength * self.weight
         if hasattr(self.source_neuron, "synaptic_fatigue"):
             effective_signal *= self.source_neuron.synaptic_fatigue
+        # Dale's Law: a neuron's excitatory/inhibitory identity is a property
+        # of the SENDER and applies to every target it connects to. This is
+        # the one place that sign gets applied -- neuron.py no longer touches
+        # it on the receiving end.
+        if hasattr(self.source_neuron, "excitatory") and not self.source_neuron.excitatory:
+            effective_signal = -effective_signal
         self.pending_signals.append((current_tick + self.signal_delay, effective_signal))
+        self.last_activity_tick = current_tick
 
     def advance(self, current_tick):
         # Deliver any signals whose arrival tick has arrived.
